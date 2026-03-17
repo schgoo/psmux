@@ -161,13 +161,18 @@ pub fn parse_command_line(line: &str) -> Vec<String> {
                 current.push(c);
             }
         } else if c == '\\' && in_double_quotes {
-            // Inside double quotes, only treat \" as an escape (produces a
-            // literal double-quote).  All other backslashes are kept literal
-            // because psmux is a Windows-native tool where backslash is the
-            // normal path separator (e.g. "C:\Program Files\Git\bin\bash.exe").
+            // Inside double quotes, handle escape sequences:
+            //   \" → literal double-quote
+            //   \\ → literal backslash
+            // All other backslashes are kept literal because psmux is a
+            // Windows-native tool where backslash is the normal path
+            // separator (e.g. "C:\Program Files\Git\bin\bash.exe").
             if i + 1 < chars.len() && chars[i + 1] == '"' {
                 current.push('"');
                 i += 1; // skip the quote
+            } else if i + 1 < chars.len() && chars[i + 1] == '\\' {
+                current.push('\\');
+                i += 1; // skip the second backslash
             } else {
                 current.push(c); // literal backslash
             }
@@ -811,4 +816,36 @@ pub fn execute_command_string(app: &mut AppState, cmd: &str) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod parse_command_line_tests {
+    use super::parse_command_line;
+
+    #[test]
+    fn windows_path_preserved() {
+        let result = parse_command_line(r#"set -g default-shell "C:\Program Files\Git\bin\bash.exe""#);
+        assert_eq!(result, vec!["set", "-g", "default-shell", r"C:\Program Files\Git\bin\bash.exe"]);
+    }
+
+    #[test]
+    fn escaped_backslash_in_double_quotes() {
+        let result = parse_command_line(r#"send-text "\\""#);
+        assert_eq!(result, vec!["send-text", r"\"]);
+    }
+
+    #[test]
+    fn escaped_double_quote_in_double_quotes() {
+        let result = parse_command_line(r#"send-text "hello \"world\"""#);
+        assert_eq!(result, vec!["send-text", r#"hello "world""#]);
+    }
+
+    #[test]
+    fn backslash_before_closing_quote_is_escaped_quote() {
+        // Trailing \" in double quotes is an escaped quote (not backslash + close)
+        // This matches the pre-existing behavior; users should use \\ before " if
+        // they need a literal backslash at the end.
+        let result = parse_command_line(r#"send-text "C:\Users\""#);
+        assert_eq!(result, vec![r#"send-text"#, r#"C:\Users""#]);
+    }
 }
